@@ -45,6 +45,28 @@
     width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--border);
     background: var(--card2); color: var(--text); font-size: 0.95rem;
   }
+  .cat-exam-title { font-size: 0.78rem; color: var(--muted); margin: 10px 0 6px; font-weight: 600; }
+  .cat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .cat-item {
+    display: flex; align-items: center; gap: 8px; padding: 9px 10px; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 9px; background: var(--card2);
+    font-size: 0.85rem; user-select: none;
+  }
+  .cat-item.on { border-color: var(--accent); background: rgba(56,189,248,.14); }
+  .cat-item .box {
+    width: 18px; height: 18px; flex: 0 0 18px; border-radius: 5px;
+    border: 1.5px solid var(--muted); display: flex; align-items: center; justify-content: center;
+    font-size: 12px; color: #0f172a;
+  }
+  .cat-item.on .box { background: var(--accent); border-color: var(--accent); }
+  .cat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cat-count { color: var(--muted); font-size: 0.72rem; margin-left: auto; }
+  .cat-toggle {
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    margin-top: 10px; cursor: pointer; font-size: 0.8rem; color: var(--muted);
+  }
+  .cat-toggle #catCaret { color: var(--accent); white-space: nowrap; }
+  #catChecks { margin-top: 10px; }
 
   .btn { display: block; width: 100%; padding: 14px; border: none; border-radius: 12px;
     font-size: 1rem; font-weight: 600; cursor: pointer; margin-bottom: 10px; color: #0f172a;
@@ -94,7 +116,13 @@
 
   <div class="panel">
     <div class="panel-title">出題分野</div>
-    <select id="catSel"></select>
+    <div class="pills" id="examPresets">
+      <div class="pill active" data-exam="all">すべて</div>
+      <div class="pill" data-exam="IP">ITパスポート</div>
+      <div class="pill" data-exam="FE">基本情報</div>
+    </div>
+    <div class="cat-toggle" id="catToggle" onclick="toggleCatDetail()"><span id="catSummary"></span><span id="catCaret">▾ 分野を個別に選ぶ</span></div>
+    <div id="catChecks" class="hidden"></div>
   </div>
 
   <div class="panel">
@@ -109,20 +137,7 @@
 
   <button class="btn" onclick="startQuiz('all')">▶ クイズを始める（ランダム）</button>
   <button class="btn review" id="reviewBtn" onclick="startQuiz('review')">🔁 間違えた問題を復習</button>
-  <button class="btn secondary" onclick="toggleAdd()">＋ 問題を追加する</button>
   <p class="sub" id="bankInfo" style="text-align:center"></p>
-
-  <div id="addForm" class="quiz-card hidden">
-    <div class="q-meta">新しい問題を追加</div>
-    <input class="f" id="f-q" placeholder="問題文">
-    <input class="f" id="f-c0" placeholder="選択肢1（これを正解にします）" style="border-color:var(--accent2)">
-    <input class="f" id="f-c1" placeholder="選択肢2">
-    <input class="f" id="f-c2" placeholder="選択肢3">
-    <input class="f" id="f-c3" placeholder="選択肢4">
-    <input class="f" id="f-exp" placeholder="解説（任意）">
-    <button class="btn" onclick="addQuestion()">保存する</button>
-    <p class="sub" style="margin:0">※選択肢1が正解。出題時に順番はシャッフルされます。</p>
-  </div>
 </div>
 
 <!-- クイズ -->
@@ -658,18 +673,17 @@ window.QUESTIONS.push(
 <script>
 // ====== データ管理 ======
 const LS = {
-  get user() { return JSON.parse(localStorage.getItem("it_userq") || "[]"); },
-  set user(v) { localStorage.setItem("it_userq", JSON.stringify(v)); },
   get stats() { return JSON.parse(localStorage.getItem("it_stats") || '{"total":0,"correct":0,"lastDate":null,"streak":0,"wrong":[]}'); },
   set stats(v) { localStorage.setItem("it_stats", JSON.stringify(v)); }
 };
 
-// 全問題プール（ファイル由来 + ユーザー追加）。形式: {c,q,a:[正解,誤,誤,誤],e}
+// 全問題プール。形式: {c,q,a:[正解,誤,誤,誤],e}
 function allQuestions() {
-  return (window.QUESTIONS || []).concat(LS.user);
+  return (window.QUESTIONS || []);
 }
 let selectedCount = 20;
-let selectedCat = "all";
+let selectedCats = new Set();   // 選択中の分野名。空＝全分野
+let catsBuilt = false;
 
 function todayStr() { const d = new Date(); return d.getFullYear()+"-"+(d.getMonth()+1)+"-"+d.getDate(); }
 function dayDiff(a,b){ return Math.round((new Date(b)-new Date(a))/86400000); }
@@ -684,16 +698,134 @@ function renderHome() {
   document.getElementById("reviewBtn").disabled = (s.wrong||[]).length === 0;
   document.getElementById("reviewBtn").textContent = "🔁 間違えた問題を復習（"+(s.wrong||[]).length+"問）";
 
-  // 分野セレクト
-  const cats = [...new Set(allQuestions().map(q=>q.c).filter(Boolean))].sort();
-  const sel = document.getElementById("catSel");
-  if (sel.options.length === 0) {
-    const optAll = document.createElement("option"); optAll.value="all"; optAll.textContent="すべての分野";
-    sel.appendChild(optAll);
-    cats.forEach(c => { const o=document.createElement("option"); o.value=c; o.textContent=c; sel.appendChild(o); });
-    sel.onchange = () => selectedCat = sel.value;
-  }
+  // 分野チェックボックス（初回のみ構築）
+  if (!catsBuilt) { buildCategoryChecks(); catsBuilt = true; }
   document.getElementById("bankInfo").textContent = "収録問題数：" + allQuestions().length + " 問";
+}
+
+// 分野ごとの問題数を集計
+function catCounts() {
+  const m = {};
+  allQuestions().forEach(q => { if (q.c) m[q.c] = (m[q.c]||0) + 1; });
+  return m;
+}
+
+// 分野チェックボックスを資格(IP/FE)ごとにグループ化して構築
+function buildCategoryChecks() {
+  const counts = catCounts();
+  const cats = Object.keys(counts).sort();
+  // 資格プレフィックスごとにまとめる（"IP テクノロジ" → "IP"）
+  const groups = {};
+  cats.forEach(c => {
+    const exam = c.split(" ")[0];
+    (groups[exam] = groups[exam] || []).push(c);
+  });
+  const labels = { "IP": "ITパスポート", "FE": "基本情報技術者" };
+  const box = document.getElementById("catChecks");
+  box.innerHTML = "";
+  Object.keys(groups).sort().forEach(exam => {
+    const group = document.createElement("div");
+    group.className = "cat-group";
+    group.dataset.exam = exam;
+    const title = document.createElement("div");
+    title.className = "cat-exam-title";
+    title.textContent = (labels[exam] || exam) + "（" + exam + "）";
+    group.appendChild(title);
+    const grid = document.createElement("div");
+    grid.className = "cat-grid";
+    groups[exam].forEach(c => {
+      const item = document.createElement("div");
+      item.className = "cat-item";
+      item.dataset.cat = c;
+      const shortName = c.replace(/^(IP|FE)\s*/, "");
+      item.innerHTML = '<span class="box">✓</span><span class="cat-name">' + shortName +
+                       '</span><span class="cat-count">' + counts[c] + '</span>';
+      item.onclick = () => { toggleCat(c); };
+      grid.appendChild(item);
+    });
+    group.appendChild(grid);
+    box.appendChild(group);
+  });
+  applyExamView(currentExamView);
+  updateCatUI();
+}
+
+// 表示する資格グループを切り替え（all / IP / FE）
+let currentExamView = "all";
+function applyExamView(exam) {
+  currentExamView = exam;
+  document.querySelectorAll("#catChecks .cat-group").forEach(g => {
+    g.classList.toggle("hidden", exam !== "all" && g.dataset.exam !== exam);
+  });
+}
+
+// 分野の選択を切り替え
+function toggleCat(c) {
+  if (selectedCats.has(c)) selectedCats.delete(c);
+  else selectedCats.add(c);
+  updateCatUI();
+}
+
+// 分野の個別選択（折りたたみ）を開閉
+function toggleCatDetail() {
+  const box = document.getElementById("catChecks");
+  const caret = document.getElementById("catCaret");
+  const hidden = box.classList.toggle("hidden");
+  caret.textContent = hidden ? "▾ 分野を個別に選ぶ" : "▴ 個別選択を閉じる";
+}
+
+// 分野の個別選択を開く（プレゼット押下時に使用）
+function openCatDetail() {
+  document.getElementById("catChecks").classList.remove("hidden");
+  document.getElementById("catCaret").textContent = "▴ 個別選択を閉じる";
+}
+
+// プレゼット（すべて / IP / FE）
+function applyPreset(exam) {
+  selectedCats = new Set();
+  if (exam !== "all") {
+    Object.keys(catCounts()).forEach(c => { if (c.split(" ")[0] === exam) selectedCats.add(c); });
+  }
+  updateCatUI();
+}
+
+// 選択状態を画面に反映
+function updateCatUI() {
+  const counts = catCounts();
+  const allCats = Object.keys(counts);
+  // 各チェック項目
+  document.querySelectorAll("#catChecks .cat-item").forEach(it => {
+    const c = it.dataset.cat;
+    const on = selectedCats.size === 0 || selectedCats.has(c); // 空＝全選択扱い
+    it.classList.toggle("on", on);
+  });
+  // プレゼットの active 表示
+  const examsSelected = {};
+  allCats.forEach(c => { const e = c.split(" ")[0]; examsSelected[e] = examsSelected[e] || { total:0, on:0 }; });
+  allCats.forEach(c => {
+    const e = c.split(" ")[0];
+    examsSelected[e].total++;
+    if (selectedCats.size === 0 || selectedCats.has(c)) examsSelected[e].on++;
+  });
+  let activePreset = "";
+  if (selectedCats.size === 0) activePreset = "all";
+  else {
+    const exams = Object.keys(examsSelected).filter(e => examsSelected[e].on > 0);
+    if (exams.length === 1 && examsSelected[exams[0]].on === examsSelected[exams[0]].total) activePreset = exams[0];
+  }
+  document.querySelectorAll("#examPresets .pill").forEach(p => {
+    p.classList.toggle("active", p.dataset.exam === activePreset);
+  });
+  // 出題可能数の表示
+  const pool = effectivePool().length;
+  document.getElementById("catSummary").textContent = "選択中の分野から出題：" + pool + " 問";
+}
+
+// 現在の選択に基づく出題プール
+function effectivePool() {
+  const all = allQuestions();
+  if (selectedCats.size === 0) return all;
+  return all.filter(q => selectedCats.has(q.c));
 }
 
 // 出題数ピル
@@ -702,6 +834,14 @@ document.getElementById("countPills").addEventListener("click", e => {
   document.querySelectorAll("#countPills .pill").forEach(x=>x.classList.remove("active"));
   p.classList.add("active");
   selectedCount = parseInt(p.dataset.n, 10);
+});
+
+// 資格プレゼット（すべて / IP / FE）
+document.getElementById("examPresets").addEventListener("click", e => {
+  const p = e.target.closest(".pill"); if (!p) return;
+  applyPreset(p.dataset.exam);
+  applyExamView(p.dataset.exam);
+  openCatDetail();
 });
 
 // ====== クイズ ======
@@ -714,9 +854,9 @@ function startQuiz(mode) {
     const wrongQ = LS.stats.wrong || [];
     pool = all.filter(q => wrongQ.includes(q.q));
   } else {
-    pool = selectedCat === "all" ? all.slice() : all.filter(q => q.c === selectedCat);
+    pool = effectivePool().slice();
   }
-  if (pool.length === 0) { alert("出題できる問題がありません。"); return; }
+  if (pool.length === 0) { alert("出題できる問題がありません。分野を1つ以上選んでください。"); return; }
   const n = mode === "review" ? pool.length : selectedCount;
   session = { list: shuffle(pool).slice(0, n), idx: 0, score: 0, answered: false, mode };
   show("quiz");
@@ -788,26 +928,12 @@ function finishQuiz() {
   document.getElementById("r-msg").textContent = msg + "　🔥 連続 "+s.streak+" 日";
 }
 
-// ====== 問題追加 ======
-function toggleAdd(){ document.getElementById("addForm").classList.toggle("hidden"); }
-function addQuestion() {
-  const q = document.getElementById("f-q").value.trim();
-  const c = [0,1,2,3].map(i=>document.getElementById("f-c"+i).value.trim());
-  if (!q || c.some(x=>!x)) { alert("問題文と選択肢4つを入力してください。"); return; }
-  const list = LS.user;
-  list.push({ c:"自作問題", q, a:c, e:document.getElementById("f-exp").value.trim() });
-  LS.user = list;
-  ["f-q","f-c0","f-c1","f-c2","f-c3","f-exp"].forEach(id=>document.getElementById(id).value="");
-  alert("追加しました！（自作 "+list.length+" 問）");
-  toggleAdd(); renderHome();
-}
-
 // ====== 画面 ======
 function show(id){ ["home","quiz","result"].forEach(x=>document.getElementById(x).classList.add("hidden")); document.getElementById(id).classList.remove("hidden"); }
 function goHome(){ renderHome(); show("home"); }
 function resetAll(){
-  if (confirm("学習データ（統計・自作問題）を消します。よろしいですか？")) {
-    localStorage.removeItem("it_userq"); localStorage.removeItem("it_stats");
+  if (confirm("学習データ（成績・連続日数）を消します。よろしいですか？")) {
+    localStorage.removeItem("it_stats");
     goHome();
   }
 }
