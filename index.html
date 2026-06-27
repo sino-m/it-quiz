@@ -23,6 +23,7 @@
     font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
     background: var(--bg); color: var(--text); line-height: 1.7;
     padding: 16px; max-width: 720px; margin: 0 auto;
+    padding-bottom: calc(84px + env(safe-area-inset-bottom));
   }
   h1 { font-size: 1.3rem; margin-bottom: 4px; }
   .sub { color: var(--muted); font-size: 0.85rem; margin-bottom: 16px; }
@@ -67,6 +68,59 @@
   }
   .cat-toggle #catCaret { color: var(--accent); white-space: nowrap; }
   #catChecks { margin-top: 10px; }
+
+  /* 用語を調べる（Gemini）— 常時表示の下部バー */
+  #lookupBar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+    display: flex; gap: 8px; align-items: center;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    background: var(--card); border-top: 1px solid var(--border);
+  }
+  #lookupBar > * { margin: 0; }
+  #lookupInput {
+    flex: 1; min-width: 0; padding: 12px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--card2); color: var(--text); font-size: 16px;
+  }
+  #lookupGo {
+    flex: 0 0 auto; padding: 12px 16px; border: none; border-radius: 10px;
+    background: var(--accent); color: #0f172a; font-weight: 700; font-size: 0.95rem; cursor: pointer;
+  }
+  #lookupGo:disabled { opacity: .5; }
+  #lookupKeyBtn {
+    flex: 0 0 auto; width: 44px; padding: 12px 0; border: 1px solid var(--border);
+    border-radius: 10px; background: var(--card2); color: var(--text); font-size: 1rem; cursor: pointer;
+  }
+  /* 単語選択時の「調べる」バブル */
+  #selBubble {
+    position: fixed; z-index: 80; border: none; border-radius: 8px;
+    background: var(--accent); color: #0f172a; font-weight: 700; font-size: 0.85rem;
+    padding: 8px 12px; box-shadow: 0 3px 10px rgba(0,0,0,.45); cursor: pointer; white-space: nowrap;
+  }
+  /* 検索結果パネル（バーの上にせり出す） */
+  #lookupPanel {
+    position: fixed; left: 0; right: 0; z-index: 59;
+    bottom: calc(64px + env(safe-area-inset-bottom));
+    max-width: 720px; margin: 0 auto;
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px 14px 0 0;
+    box-shadow: 0 -6px 20px rgba(0,0,0,.4);
+    max-height: 60vh; overflow-y: auto; padding: 14px;
+  }
+  .lookup-panel-head { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 10px; font-size: 0.92rem; }
+  .lookup-result {
+    padding: 12px; border-radius: 12px; background: var(--card2);
+    border-left: 4px solid var(--accent); font-size: 0.92rem; white-space: pre-wrap;
+  }
+  /* キー設定モーダル */
+  .modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 100;
+    display: flex; align-items: center; justify-content: center; padding: 16px;
+  }
+  .modal-card {
+    width: 100%; max-width: 480px; background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; padding: 18px; max-height: 85vh; overflow-y: auto;
+  }
+  .modal-head { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 14px; }
+  .modal-close { cursor: pointer; color: var(--muted); font-size: 1.1rem; padding: 4px 8px; }
 
   .btn { display: block; width: 100%; padding: 14px; border: none; border-radius: 12px;
     font-size: 1rem; font-weight: 600; cursor: pointer; margin-bottom: 10px; color: #0f172a;
@@ -117,8 +171,7 @@
   <div class="panel">
     <div class="panel-title">出題分野</div>
     <div class="pills" id="examPresets">
-      <div class="pill active" data-exam="all">すべて</div>
-      <div class="pill" data-exam="IP">ITパスポート</div>
+      <div class="pill active" data-exam="IP">ITパスポート</div>
       <div class="pill" data-exam="FE">基本情報</div>
     </div>
     <div class="cat-toggle" id="catToggle" onclick="toggleCatDetail()"><span id="catSummary"></span><span id="catCaret">▾ 分野を個別に選ぶ</span></div>
@@ -167,6 +220,38 @@
 </div>
 
 <footer>データはこのブラウザ内に保存されます（自分専用）。<br><a class="link" onclick="resetAll()">学習データをリセット</a></footer>
+
+<!-- 用語の解説パネル（検索結果。検索バーの上にせり出す） -->
+<div id="lookupPanel" class="hidden">
+  <div class="lookup-panel-head">
+    <span>🔍 用語の解説（Gemini）</span>
+    <span class="modal-close" onclick="hideLookupPanel()">✕</span>
+  </div>
+  <div id="lookupResult" class="lookup-result"></div>
+</div>
+
+<!-- 単語選択時に出る「調べる」バブル（Chromeのタップ検索風） -->
+<button id="selBubble" class="hidden">🔍 調べる</button>
+
+<!-- 常時表示の検索バー -->
+<div id="lookupBar">
+  <input id="lookupInput" placeholder="気になった用語をGeminiで調べる">
+  <button id="lookupGo" onclick="doLookup()">調べる</button>
+  <button id="lookupKeyBtn" onclick="showKeyForm()" aria-label="APIキー設定" title="APIキー設定">⚙</button>
+</div>
+
+<!-- APIキー設定モーダル -->
+<div id="keyModal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <span>Gemini APIキーの設定</span>
+      <span class="modal-close" onclick="hideKeyForm()">✕</span>
+    </div>
+    <p class="sub" style="margin:0 0 8px">APIキーを入力してください（このiPhoneの中だけに保存されます）。<br>キーは <a class="link" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> で無料取得できます。</p>
+    <input id="keyInput" class="f" placeholder="APIキーを貼り付け" style="margin:0 0 8px">
+    <button class="btn" onclick="saveKey()">保存する</button>
+  </div>
+</div>
 
 <!-- QUESTIONS_START -->
 <!-- questions data: auto-generated by build.ps1 from questions-*.js (do not edit by hand) -->
@@ -750,8 +835,8 @@ function buildCategoryChecks() {
   updateCatUI();
 }
 
-// 表示する資格グループを切り替え（all / IP / FE）
-let currentExamView = "all";
+// 表示する資格グループを切り替え（IP / FE）
+let currentExamView = "IP";
 function applyExamView(exam) {
   currentExamView = exam;
   document.querySelectorAll("#catChecks .cat-group").forEach(g => {
@@ -780,52 +865,41 @@ function openCatDetail() {
   document.getElementById("catCaret").textContent = "▴ 個別選択を閉じる";
 }
 
-// プレゼット（すべて / IP / FE）
+// プレゼット（すべて / IP / FE）：表示の切り替えのみ。チェックは付けない
 function applyPreset(exam) {
-  selectedCats = new Set();
-  if (exam !== "all") {
-    Object.keys(catCounts()).forEach(c => { if (c.split(" ")[0] === exam) selectedCats.add(c); });
-  }
+  selectedCats = new Set();   // 個別チェックはリセット
+  applyExamView(exam);        // 表示する資格グループを切替（currentExamView も更新）
   updateCatUI();
 }
 
 // 選択状態を画面に反映
 function updateCatUI() {
-  const counts = catCounts();
-  const allCats = Object.keys(counts);
-  // 各チェック項目
+  // 各チェック項目（空＝どれも選択していない状態。チェックは付けたものだけ）
   document.querySelectorAll("#catChecks .cat-item").forEach(it => {
     const c = it.dataset.cat;
-    const on = selectedCats.size === 0 || selectedCats.has(c); // 空＝全選択扱い
-    it.classList.toggle("on", on);
+    it.classList.toggle("on", selectedCats.has(c));
   });
-  // プレゼットの active 表示
-  const examsSelected = {};
-  allCats.forEach(c => { const e = c.split(" ")[0]; examsSelected[e] = examsSelected[e] || { total:0, on:0 }; });
-  allCats.forEach(c => {
-    const e = c.split(" ")[0];
-    examsSelected[e].total++;
-    if (selectedCats.size === 0 || selectedCats.has(c)) examsSelected[e].on++;
-  });
-  let activePreset = "";
-  if (selectedCats.size === 0) activePreset = "all";
-  else {
-    const exams = Object.keys(examsSelected).filter(e => examsSelected[e].on > 0);
-    if (exams.length === 1 && examsSelected[exams[0]].on === examsSelected[exams[0]].total) activePreset = exams[0];
-  }
+  // プレゼットの active 表示は「表示中の資格」に連動
   document.querySelectorAll("#examPresets .pill").forEach(p => {
-    p.classList.toggle("active", p.dataset.exam === activePreset);
+    p.classList.toggle("active", p.dataset.exam === currentExamView);
   });
   // 出題可能数の表示
   const pool = effectivePool().length;
-  document.getElementById("catSummary").textContent = "選択中の分野から出題：" + pool + " 問";
+  const labels2 = { "IP": "ITパスポート", "FE": "基本情報" };
+  let txt;
+  if (selectedCats.size > 0) txt = "選択した分野から出題：" + pool + " 問";
+  else if (currentExamView === "all") txt = "全分野からランダム出題：" + pool + " 問";
+  else txt = (labels2[currentExamView] || currentExamView) + "の全分野から出題：" + pool + " 問";
+  document.getElementById("catSummary").textContent = txt;
 }
 
 // 現在の選択に基づく出題プール
+// 個別チェックがあればそれを優先。無ければ「表示中の資格」全体から出題
 function effectivePool() {
   const all = allQuestions();
-  if (selectedCats.size === 0) return all;
-  return all.filter(q => selectedCats.has(q.c));
+  if (selectedCats.size > 0) return all.filter(q => selectedCats.has(q.c));
+  if (currentExamView === "all") return all;
+  return all.filter(q => q.c.split(" ")[0] === currentExamView);
 }
 
 // 出題数ピル
@@ -937,6 +1011,134 @@ function resetAll(){
     goHome();
   }
 }
+
+// ====== 用語を調べる（Gemini） ======
+function getKey(){ return localStorage.getItem("gemini_key") || ""; }
+
+function showLookupPanel(){ document.getElementById("lookupPanel").classList.remove("hidden"); }
+function hideLookupPanel(){ document.getElementById("lookupPanel").classList.add("hidden"); }
+
+function showKeyForm(){
+  document.getElementById("keyInput").value = getKey();
+  document.getElementById("keyModal").classList.remove("hidden");
+}
+function hideKeyForm(){ document.getElementById("keyModal").classList.add("hidden"); }
+function saveKey(){
+  const k = document.getElementById("keyInput").value.trim();
+  if (!k) { alert("APIキーを入力してください。"); return; }
+  localStorage.setItem("gemini_key", k);
+  hideKeyForm();
+  alert("APIキーを保存しました。これで用語検索が使えます。");
+}
+
+async function doLookup(){
+  const term = document.getElementById("lookupInput").value.trim();
+  const out = document.getElementById("lookupResult");
+  if (!term) { showLookupPanel(); out.textContent = "調べたい単語を入力してください。"; return; }
+  const key = getKey();
+  if (!key) { showKeyForm(); return; }
+  const btn = document.getElementById("lookupGo");
+  btn.disabled = true; showLookupPanel(); out.textContent = "調べています…";
+  const prompt = term;
+
+  // 繋がるモデルを順に試す
+  const models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-1.5-flash"];
+  let lastErr = "";
+  try {
+    for (const model of models) {
+      const url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + encodeURIComponent(key);
+      let res;
+      try {
+        res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+        });
+      } catch (netErr) {
+        out.textContent = "通信に失敗しました。ネット接続を確認してください。";
+        console.error(netErr);
+        return;
+      }
+      if (res.ok) {
+        const data = await res.json();
+        const parts = (((data.candidates||[])[0]||{}).content||{}).parts;
+        const raw = (parts && parts[0] && parts[0].text) ? parts[0].text.trim() : "";
+        out.textContent = raw || "回答を取得できませんでした。";
+        return;
+      }
+      // エラー本文を取得
+      let msg = "";
+      try { const j = await res.json(); msg = (j.error && j.error.message) ? j.error.message : ""; }
+      catch(_) {}
+      lastErr = "[" + res.status + "] " + msg;
+      console.error(model, lastErr);
+      // 404(モデルなし)なら次のモデルを試す。それ以外は確定エラー
+      if (res.status === 404) continue;
+      if (res.status === 400 && /API key not valid|API_KEY_INVALID/i.test(msg)) {
+        out.textContent = "APIキーが正しくありません。『Gemini APIキーの設定』から入れ直してください。\n\n詳細：" + msg;
+        return;
+      }
+      if (res.status === 403) {
+        out.textContent = "APIキーの権限がありません。Google AI Studioでキーを作り直すか、Generative Language APIが有効か確認してください。\n\n詳細：" + msg;
+        return;
+      }
+      if (res.status === 429) {
+        out.textContent = "無料枠の利用上限に達した可能性があります。少し時間をおいて再度お試しください。\n\n詳細：" + msg;
+        return;
+      }
+      // その他のエラーも内容を表示して次へ
+    }
+    out.textContent = "うまく繋がりませんでした。エラー内容：\n" + (lastErr || "不明") +
+      "\n\nこの文章をそのまま教えてください。設定を直します。";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Enterキーで検索
+document.getElementById("lookupInput").addEventListener("keydown", e => { if (e.key === "Enter") doLookup(); });
+
+// ====== 単語を選択すると「調べる」バブルを出す（Chromeのタップ検索風） ======
+let selectedText = "";
+const selBubble = document.getElementById("selBubble");
+
+function hideSelBubble(){ selBubble.classList.add("hidden"); }
+
+function updateSelBubble(){
+  const sel = window.getSelection ? window.getSelection() : null;
+  const t = sel ? sel.toString().trim() : "";
+  // 検索バーや結果パネル内の選択は対象外
+  const anchor = sel && sel.anchorNode ? (sel.anchorNode.parentElement || sel.anchorNode) : null;
+  const inUI = anchor && anchor.closest && anchor.closest("#lookupBar, #lookupPanel, #selBubble, .modal");
+  if (!t || t.length > 30 || inUI) { hideSelBubble(); selectedText = ""; return; }
+  selectedText = t;
+  try {
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    selBubble.classList.remove("hidden");
+    const bw = selBubble.offsetWidth || 90, bh = selBubble.offsetHeight || 34;
+    let left = rect.left + rect.width/2 - bw/2;
+    left = Math.max(8, Math.min(left, window.innerWidth - bw - 8));
+    let top = rect.top - bh - 8;
+    if (top < 8) top = rect.bottom + 8; // 上に出せなければ下に
+    selBubble.style.left = left + "px";
+    selBubble.style.top = top + "px";
+  } catch(_) { hideSelBubble(); }
+}
+
+document.addEventListener("selectionchange", updateSelBubble);
+window.addEventListener("scroll", hideSelBubble, true);
+
+// バブルタップで選択語を検索（選択が消える前に実行）
+function bubbleSearch(e){
+  e.preventDefault();
+  if (!selectedText) return;
+  document.getElementById("lookupInput").value = selectedText;
+  hideSelBubble();
+  doLookup();
+}
+selBubble.addEventListener("mousedown", bubbleSearch);
+selBubble.addEventListener("touchstart", bubbleSearch, { passive: false });
+
 renderHome();
 </script>
 </body>
